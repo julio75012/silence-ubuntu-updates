@@ -99,7 +99,25 @@ if command -v gsettings >/dev/null; then
   gsettings set com.ubuntu.update-notifier show-livepatch-status-icon false
   gsettings set com.ubuntu.update-notifier show-apport-crashes false
   gsettings set com.ubuntu.update-notifier regular-auto-launch-interval 36500
+  gsettings set org.gnome.software download-updates false 2>/dev/null || true
+  gsettings set org.gnome.software allow-updates false 2>/dev/null || true
 fi
+
+say "Stock desktop extras: Snap, Ubuntu Pro hooks, fwupd"
+if command -v snap >/dev/null 2>&1; then
+  sudo snap refresh --hold=forever || true
+  snap refresh --time || true
+else
+  echo "snap not installed, skip"
+fi
+sudo systemctl stop    apt-news.service esm-cache.service 2>/dev/null || true
+sudo systemctl disable apt-news.service esm-cache.service 2>/dev/null || true
+sudo systemctl mask    apt-news.service esm-cache.service 2>/dev/null || true
+sudo pro config set apt_news=false 2>/dev/null || true
+sudo systemctl stop    fwupd-refresh.timer fwupd-refresh.service 2>/dev/null || true
+sudo systemctl disable fwupd-refresh.timer 2>/dev/null || true
+sudo systemctl mask    fwupd-refresh.timer fwupd-refresh.service 2>/dev/null || true
+sudo chmod -x /etc/update-motd.d/85-fwupd 2>/dev/null || true
 
 say "Done. Run scripts/verify-muted.sh after a reboot."
 echo "Manual updates: sudo apt update && sudo apt upgrade"

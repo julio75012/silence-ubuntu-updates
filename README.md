@@ -2,7 +2,7 @@
 
 **Kill the Software Updater window. Keep `apt` under your control.**
 
-Tested on **Ubuntu 24.04 LTS** (English desktop). Snap was already removed on the reference machine; Snap refresh is therefore out of scope.
+Tested on **Ubuntu 24.04 LTS** (English desktop). The reference machine had already dropped Snap and masked PackageKit. A stock desktop install still has Snap, Ubuntu Pro APT hooks, fwupd, and (often) GNOME Software / App Center. Those extras are in the [stock desktop](#stock-ubuntu-2404-desktop-extras) section.
 
 The Software & Updates GUI is incomplete. The *Automatically check for updates* menu can be set to *Never*, but *When there are security updates* and *When there are other updates* still refuse `Never`. GSettings keys such as `auto-launch` no longer exist on 24.04. The popup still comes back because Ubuntu splits the job across **APT periodic config**, **systemd timers**, **unattended-upgrades**, **PackageKit**, **update-notifier autostart**, and **MOTD scripts**.
 
@@ -107,7 +107,41 @@ gsettings set com.ubuntu.update-notifier regular-auto-launch-interval 36500
 
 `gsettings set com.ubuntu.update-notifier auto-launch false` **fails on 24.04**. The key is gone. Do not waste time on it.
 
-Missing MOTD files (`88-esm-announce`, `/etc/default/motd-news`) are normal. Ignore `chmod: cannot access`.
+Missing MOTD files (`88-esm-announce`, `/etc/default/motd-news`) are normal. Ignore `chmod: cannot access`. Commands are idempotent: they are safe on a machine that was already half-muted from the GUI.
+
+---
+
+## Stock Ubuntu 24.04 Desktop extras
+
+The block above is enough to stop **Software Updater**. A *from-zero* desktop still has other nags. Add this if Snap / App Center / Ubuntu Pro / firmware banners are present.
+
+```bash
+# Snap auto-refresh (installed by default; skip if snap is gone)
+if command -v snap >/dev/null 2>&1; then
+  sudo snap refresh --hold=forever
+  snap refresh --time
+fi
+
+# Ubuntu Pro APT hooks — fire on every `apt update`, not only via timers
+sudo systemctl stop    apt-news.service esm-cache.service 2>/dev/null || true
+sudo systemctl disable apt-news.service esm-cache.service 2>/dev/null || true
+sudo systemctl mask    apt-news.service esm-cache.service
+sudo pro config set apt_news=false 2>/dev/null || true
+
+# Firmware metadata refresh (fwupd) — MOTD + background network
+sudo systemctl stop    fwupd-refresh.timer fwupd-refresh.service 2>/dev/null || true
+sudo systemctl disable fwupd-refresh.timer 2>/dev/null || true
+sudo systemctl mask    fwupd-refresh.timer fwupd-refresh.service
+sudo chmod -x /etc/update-motd.d/85-fwupd 2>/dev/null || true
+
+# GNOME Software / App Center background download + notify
+gsettings set org.gnome.software download-updates false 2>/dev/null || true
+gsettings set org.gnome.software allow-updates false 2>/dev/null || true
+```
+
+`packagekit.service` is masked in the main block. On a virgin desktop it is *enabled*, not pre-masked. The mask is required there.
+
+Do not purge `ubuntu-pro-client`. Desktop metapackages depend on it. Mask the services and set `apt_news=false`.
 
 ---
 
@@ -221,7 +255,7 @@ stop Ubuntu Pro / ESM advertising in MOTD on 24.04.
 - Do **not** purge `update-notifier` or `update-manager` unless you accept pulling desktop metapackages with them.
 - Do **not** purge `unattended-upgrades` if you only want it stopped. Masking is enough and is reversible.
 - Do **not** rely on `gsettings … auto-launch false`. The key does not exist on 24.04.
-- Do **not** leave Snap refresh enabled if you still have Snap. This guide assumes Snap is already gone (`sudo snap refresh --hold=forever` if it is not).
+- Do **not** leave Snap refresh enabled on a stock desktop. Hold it (`sudo snap refresh --hold=forever`) or remove Snap.
 
 ---
 
@@ -275,7 +309,8 @@ That is the entire remaining interface. No window, no tray nag, no daily APT loc
 
 - Confirmed: Ubuntu 24.04 LTS desktop, systemd, English UI.
 - Not tested here: Ubuntu 22.04, 25.10, 26.04. Unit names drift. Check `systemctl list-unit-files '*update-notifier*'` before masking.
-- Snap: not covered. Remove Snap or `snap refresh --hold=forever`.
+- Snap / App Center / Ubuntu Pro / fwupd: covered in the stock-desktop section. Not present on the Snap-less reference host.
 - Flatpak: not covered (`flatpak remote-ls --updates` is separate).
+- Previous GUI clicks do not conflict. The files and masks overwrite them.
 
 MIT. Use at your own risk.
