@@ -10,32 +10,51 @@ The Software & Updates GUI cannot do this. *Automatically check for updates* acc
 
 ## Ubuntu 24.04 LTS defaults vs muted
 
-Values below are the stock Desktop packaging (Noble). Server is the same APT stack without the GNOME / App Center rows.
+Stock column = Noble Desktop packaging (verified against 24.04.4 unit files and schemas). Server is the same APT stack without GNOME Software / App Center.
 
 | Component | Stock 24.04 LTS | Muted |
 |---|---|---|
 | `/etc/apt/apt.conf.d/20auto-upgrades` | `Update-Package-Lists "1"`; `Unattended-Upgrade "1"` | both `"0"` |
-| `/etc/apt/apt.conf.d/10periodic` (from `update-notifier-common`) | `Update-Package-Lists "1"`; `Unattended-Upgrade "1"`; download/autoclean `"0"` | all `"0"` |
+| `/etc/apt/apt.conf.d/10periodic` (`update-notifier-common`) | `Update-Package-Lists "1"`; `Unattended-Upgrade "1"` | all four periodic keys `"0"` |
+| `/etc/apt/apt.conf.d/20apt-esm-hook.conf` | present; starts `apt-news` / `esm-cache` on `apt update` | file stays; units masked |
 | `apt-daily.timer` | enabled | masked |
 | `apt-daily-upgrade.timer` | enabled | masked |
 | `unattended-upgrades.service` | enabled | masked |
 | `update-notifier-download.timer` | enabled | masked |
 | `update-notifier-motd.timer` | enabled | masked |
-| `motd-news.timer` / `motd-news.service` | enabled | masked |
+| `motd-news.timer` / `motd-news.service` | enabled (`/etc/default/motd-news` often **absent** on Desktop) | masked |
 | `packagekit.service` | enabled (D-Bus activate) | masked |
-| `fwupd-refresh.timer` | enabled on Desktop | masked |
-| `apt-news.service` / `esm-cache.service` | started from `/etc/apt/apt.conf.d/20apt-esm-hook.conf` on every `apt update` | masked |
-| `/etc/xdg/autostart/update-notifier.desktop` | installed, starts at login | renamed `.disabled` |
+| `fwupd-refresh.timer` | enabled; `fwupd` daemon running | masked |
+| `apt-news.service` / `esm-cache.service` | static (started by the ESM APT hook) | masked |
+| `/etc/xdg/autostart/update-notifier.desktop` | installed | renamed `.disabled` |
 | `/etc/xdg/autostart/ubuntu-advantage-notification.desktop` | installed | renamed `.disabled` |
 | user units `update-notifier-*.path` | wanted by `graphical-session.target` | masked |
 | `com.ubuntu.update-notifier no-show-notifications` | `false` | `true` |
-| `com.ubuntu.update-notifier regular-auto-launch-interval` | `7` (days; security still launches immediately) | `36500` |
+| `com.ubuntu.update-notifier regular-auto-launch-interval` | `7` | `36500` |
 | `com.ubuntu.update-notifier hide-reboot-notification` | `false` | `true` |
-| `/etc/update-motd.d/{50-motd-news,90-updates-available,91-release-upgrade,91-contract-ua-esm-status,92-unattended-upgrades,95-hwe-eol,98-reboot-required,85-fwupd}` | executable | `chmod -x` |
-| Snap refresh | four times per day (`00:00~24:00/4`) if `snapd` is installed | `snap refresh --hold=forever` |
-| GNOME Software `download-updates` / `allow-updates` | `true` when the schema exists | `false` |
+| `com.ubuntu.update-notifier notify-ubuntu-advantage-available` | `true` | `false` |
+| MOTD `50-motd-news`, `90-updates-available`, `91-release-upgrade`, `91-contract-ua-esm-status`, `92-unattended-upgrades`, `95-hwe-eol`, `98-reboot-required`, `85-fwupd` | executable | `chmod -x` |
+| MOTD `00-header`, `10-help-text`, `98-fsck-at-reboot` | executable | leave as-is (not update nags) |
+| Snap refresh | `00:00~24:00/4` if `snapd` is installed | `snap refresh --hold=forever` or no `snap` binary |
+| `org.gnome.software` download/allow-updates | `true` only if the schema exists | `false`, or skip if schema missing |
+| Ubuntu Pro | client installed; machine may be unattached | stay unattached; mask hooks |
 
-`apt-daily.service` and `packagekit-offline-update.service` stay `static`. They do not run without a timer or an explicit start.
+These units stay `static` and are not a leak by themselves: `apt-daily.service`, `apt-daily-upgrade.service`, `packagekit-offline-update.service`, `fwupd-refresh.service`. They run only if a timer or an APT hook starts them.
+
+---
+
+## What remains if you only mute APT + Software Updater
+
+A 24.04.4 machine that has masked the APT / update-notifier stack but has **not** yet applied the firmware and Pro hooks still shows:
+
+- `fwupd-refresh.timer` **enabled and scheduled**
+- `/usr/libexec/fwupd/fwupd` running
+- `/etc/update-motd.d/85-fwupd` still executable
+- `apt-news.service` and `esm-cache.service` **static** (the next `sudo apt update` can start them via `20apt-esm-hook.conf`)
+
+Those three items are independent of Software Updater. The apply block below covers them.
+
+`88-esm-announce` is not shipped on 24.04. Ignore `chmod: cannot access` for missing MOTD files.
 
 ---
 
@@ -117,24 +136,21 @@ gsettings set com.ubuntu.update-notifier regular-auto-launch-interval 36500
 gsettings set org.gnome.software download-updates false 2>/dev/null || true
 gsettings set org.gnome.software allow-updates false 2>/dev/null || true
 
-# Ubuntu Pro APT hooks (20apt-esm-hook.conf starts these on apt update)
+# Ubuntu Pro APT hooks
 sudo systemctl stop    apt-news.service esm-cache.service 2>/dev/null || true
-sudo systemctl disable apt-news.service esm-cache.service 2>/dev/null || true
 sudo systemctl mask    apt-news.service esm-cache.service
 sudo pro config set apt_news=false 2>/dev/null || true
 
-# Firmware metadata
+# Firmware metadata (independent of APT)
 sudo systemctl stop    fwupd-refresh.timer fwupd-refresh.service 2>/dev/null || true
 sudo systemctl disable fwupd-refresh.timer 2>/dev/null || true
 sudo systemctl mask    fwupd-refresh.timer fwupd-refresh.service
 
-# Snap (four refreshes/day on stock Desktop; no-op if snapd is absent)
+# Snap (no-op if snapd is absent)
 if command -v snap >/dev/null 2>&1; then
   sudo snap refresh --hold=forever
 fi
 ```
-
-A missing MOTD file is normal (`88-esm-announce` is not shipped on 24.04). Ignore `chmod: cannot access`.
 
 Same steps live in [`scripts/mute-ubuntu-updates.sh`](scripts/mute-ubuntu-updates.sh). The script is idempotent.
 
@@ -155,33 +171,33 @@ apt-config dump APT::Periodic
 gsettings get com.ubuntu.update-notifier no-show-notifications
 gsettings get com.ubuntu.update-notifier regular-auto-launch-interval
 test -f /etc/xdg/autostart/update-notifier.desktop && echo FAIL || echo 'OK: autostart off'
+systemctl is-enabled fwupd-refresh.timer
+systemctl is-masked apt-news.service esm-cache.service
 ```
 
-Expect `APT::Periodic::*` = `"0"`, `no-show-notifications` = `true`, interval = `36500`, timers masked, autostart file renamed.
+Expect `APT::Periodic::*` = `"0"`, `no-show-notifications` = `true`, interval = `36500`, `fwupd-refresh.timer` masked, `apt-news` / `esm-cache` masked, autostart file renamed.
 
 ---
 
 ## What each layer does
 
-**`20auto-upgrades` / `10periodic`** — read by `/usr/lib/apt/apt.systemd.daily`. `"1"` means daily. Write both files; `update-notifier-common` ships `10periodic` and `unattended-upgrades` ships `20auto-upgrades`. One leftover `"1"` re-enables the job.
+**`20auto-upgrades` / `10periodic`** — read by `/usr/lib/apt/apt.systemd.daily`. Write both; one leftover `"1"` re-enables the job.
 
-**Timers** — `apt-daily.timer` refreshes lists. `apt-daily-upgrade.timer` runs unattended upgrades. `update-notifier-*.timer` rewrites `/var/lib/update-notifier/updates-available` and MOTD counts. `mask` points the unit at `/dev/null` so a package upgrade cannot re-enable it.
+**Timers** — `mask` points the unit at `/dev/null` so a package upgrade cannot re-enable it.
 
-**Desktop notifier** — three launch paths on stock Desktop:
+**Desktop notifier** — three launch paths: xdg autostart, `regular-auto-launch-interval` (schema default 7 days; security still launches immediately), user `.path` units.
 
-1. `/etc/xdg/autostart/update-notifier.desktop` at graphical login
-2. `regular-auto-launch-interval` (schema default **7** days for non-security; security still opens immediately)
-3. user `.path` units under `graphical-session.target.wants`
+**`20apt-esm-hook.conf`** — do not delete `ubuntu-pro-client`. Mask `apt-news` and `esm-cache` so the hook cannot start them.
 
-**Ubuntu Pro** — do not purge `ubuntu-pro-client`. Desktop metapackages depend on it. Mask `apt-news` / `esm-cache` and set `apt_news=false`.
+**fwupd** — separate daemon and timer. Software Updater mute does not touch it.
 
-**Snap** — separate from APT. Stock Desktop checks four times per day until held or removed.
+**Snap** — separate from APT. Four checks per day on stock Desktop until held or removed.
 
 ---
 
 ## Do not
 
-- Purge `update-notifier`, `update-manager`, or `ubuntu-pro-client` (metapackage fallout).
+- Purge `update-notifier`, `update-manager`, or `ubuntu-pro-client`.
 - Purge `unattended-upgrades` if a mask is enough.
 - Run `gsettings set com.ubuntu.update-notifier auto-launch false` — the key is absent on 24.04.
 
@@ -197,7 +213,7 @@ sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer unattended-upgrade
                       update-notifier-download.service update-notifier-motd.service \
                       apt-news.service esm-cache.service \
                       fwupd-refresh.timer fwupd-refresh.service
-sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer
+sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer fwupd-refresh.timer
 
 systemctl --user unmask update-notifier-crash.path update-notifier-livepatch.path \
                         update-notifier-release.path \
@@ -231,8 +247,8 @@ command -v snap >/dev/null && sudo snap refresh --unhold
 
 ## Scope
 
-- Target: Ubuntu 24.04 LTS (Noble), systemd.
-- Flatpak remotes are separate and not touched.
+- Target: Ubuntu 24.04 LTS (Noble), including 24.04.4, systemd.
+- Flatpak remotes are not touched.
 - 22.04 / 25.10 / 26.04 may rename units. Check `systemctl list-unit-files '*update-notifier*'` first.
 
 MIT. Use at your own risk.
